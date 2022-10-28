@@ -1,10 +1,12 @@
 import pytest
 import numpy as np
+from math import inf
 from typing import Sequence
 from numpy.typing import ArrayLike
 from math import exp, sqrt, pi
 
-from rating.glicko2 import Glicko2
+from rating import glicko2
+from rating.glicko2 import Glicko2, performance_rating
 from rating.glicko2 import _Q, _INIT_RATING_DEV
 
 
@@ -125,6 +127,19 @@ def test_update_inplace():
         assert r1.vol != r1_init.vol
 
 
+def test_update_glickman_example():
+    """Calculate the example in http://www.glicko.net/glicko/glicko2.pdf"""
+    Glicko2.TAU = 0.5
+    p = Glicko2(1500, 200, vol=0.06 / _Q)
+    opponents = [Glicko2(1400, 30), Glicko2(1450, 100), Glicko2(1700, 300)]
+    scores = [1, 0, 0]
+    p.updated(opponents, scores, inplace=True)
+
+    assert np.allclose(p.r, 1446.88, atol=0.01)  # original is wrong: 1464.06 - he used 10**x instead of exp(x)
+    assert np.allclose(p.dev, 151.52, atol=0.01)
+    assert np.allclose(p.vol, 10.422, atol=0.001)  # 10.422 ~= 0.05999 / (_Q = ln(10) / 400) < 10.423 ~= 0.06 / _Q
+
+
 def classical_update(rating: Glicko2, opponents: Sequence[Glicko2], sj: ArrayLike, c2_t: float = 0.0):
     # as described here: https://de.wikipedia.org/wiki/Glicko-System#Klassisches_Glicko-System
     def g(o: Glicko2) -> float:
@@ -193,7 +208,7 @@ def emperically_adjust(
                                             (0.92, 0), (0.5, 0.4)])
 def test_update_statistically(win_rate: float, draw: float, sigma: float = 3.0):
     """This test should be fine in the vast majority of the cases, but still can statistically fail once in a while!"""
-    Glicko2.TAU = 0.2 + 1.0 * np.random.rand()
+    glicko2.TAU = 0.2 + 1.0 * np.random.rand()
     r, ref = emperically_adjust(win_rate)
     assert ref == Glicko2.fixed_rating(REF_RATING)
     w_low, w_high = Glicko2(r.r - sigma * r.dev).expect(ref), Glicko2(r.r + sigma * r.dev).expect(ref)
@@ -206,3 +221,38 @@ def test_update_statistically(win_rate: float, draw: float, sigma: float = 3.0):
     assert r.dev < 10
     w_low, w_high = Glicko2(r.r - sigma * r.dev).expect(ref), Glicko2(r.r + sigma * r.dev).expect(ref)
     assert w_low <= win_rate <= w_high, (r, ref, f"might statstically fail the {sigma} sigma bound - try to re-run")
+
+
+performance_data = [
+    ([Glicko2(1400, 30), Glicko2(1450, 100), Glicko2(1700, 300)], [1, 0, 0]),
+    ([Glicko2(1400, 30), Glicko2(1450, 100), Glicko2(1700, 300)], [0, 0, 0]),
+    ([Glicko2(1412, 78), Glicko2(1542, 123), Glicko2(1667, 84)], [0, 1, 0]),
+    ([Glicko2(1222, 182), Glicko2(1512, 83), Glicko2(1612, 74), Glicko2(1701, 45)], [0, 1, 0, 0]),
+    ([Glicko2(1200, 100)], [0]),
+    ([Glicko2(1200, 100)], [1]),
+]
+
+
+@pytest.mark.parametrize("opponents, results", performance_data)
+def test_performance(
+        opponents: Sequence[Glicko2],
+        results: Sequence[float | int] | ArrayLike,
+        clip_range: tuple[float, float] = (0.0, 4000.0),
+        tol: float = 1e-15,
+):
+    perf = performance_rating(opponents, results, clip_range, tol=tol)
+
+    def updated(r: float, dev_: float = inf) -> float:
+        return Glicko2(r, dev=dev_, vol=0).updated(opponents, results).r
+
+    def close_to_unchanged(r0: float, dev_: float = inf) -> bool:
+        r1 = updated(r0, dev_)
+        return (
+            np.allclose(r1, r0, atol=10*tol)
+            or (r1 <= r0 == clip_range[0])
+            or (r1 >= r0 == clip_range[1])
+        )
+
+    assert close_to_unchanged(perf), f"{perf}, {updated(perf)}"
+    for dev in [10.0, 100.0, 123.0]:
+        assert close_to_unchanged(perf, dev)

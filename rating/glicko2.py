@@ -1,14 +1,20 @@
-from typing import Sequence, Any, Union
+from typing import Sequence
+from attrs import define, field, validators
 from math import sqrt, exp, log, pi
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.optimize import root_scalar
 
+# constant tau which constrains the volatility over time
+TAU: float = 0.5
+_Q: float = log(10.0) / 400.0
 
 _INIT_RATING = 1500.0
 _INIT_RATING_DEV = 350.0
-_Q = log(10.0) / 400.0
+_DEF_VOLATILITY = 0.06 / _Q  # ~10.423
 
 
+@define(order=True, eq=True, hash=True)
 class Glicko2:
     """Implementation of the Glicko-2 rating system.
 
@@ -31,47 +37,12 @@ class Glicko2:
     all attributes (r, dev, vol) to be the same. This implies that two ratings r1 and r2 might fulfil neither of the
     following equations: r1 < r2, r1 > r2, r1 == r2.
     """
+    r: float = field(default=_INIT_RATING, order=True, eq=True, converter=float)
+    dev: float = field(default=_INIT_RATING_DEV, order=False, eq=True, converter=float, validator=validators.ge(0))
+    vol: float = field(default=_DEF_VOLATILITY, order=False, eq=True, converter=float, validator=validators.ge(0))
 
-    # constant tau which constrains the volatility over time
-    TAU = 0.5
-    DEF_VOLATILITY = 0.06 / _Q
-
-    def __init__(self, r: float = _INIT_RATING, dev: float = _INIT_RATING_DEV, vol: float | None = None):
-        """Create a classical Glicko rating or a Glicko-2 rating.
-
-        :param r:   The (initial) rating / strength.
-        :param dev: The (initial) rating deviation.
-        :param vol: For a classical Glicko rating, pass zero; for a Glicko-2 rating, pass a positive (initial)
-                    volatility, e.g. 0.06 / (ln(10) / 400) ~ 10.423 (the default) as done in "Example of the Glicko-2
-                    system" Glickman (2022; http://www.glicko.net/glicko/glicko2.pdf).
-                    Defaults to Glicko2.DEF_VOLATILITY.
-        """
-        if vol is None:
-            vol = Glicko2.DEF_VOLATILITY
-        self.r = r
-        self.dev = dev
-        self.vol = vol
-
-    def __eq__(self, other: Any) -> bool:
-        return isinstance(other, Glicko2) and (
-            self._mu == other._mu
-            and self._phi == other._phi
-            and self._sigma == other._sigma
-        )
-
-    def __lt__(self, other: Union['Glicko2', float, int]) -> bool:
-        return self.r < float(other)
-
-    def __gt__(self, other: Union['Glicko2', float, int]) -> bool:
-        return self.r > float(other)
-
-    @classmethod
-    def _by_unscaled_params(cls, mu: float, phi: float, sigma: float) -> 'Glicko2':
-        new = cls.__new__(cls)
-        new._mu = mu
-        new._phi = phi
-        new._sigma = sigma
-        return new
+    def __float__(self) -> float:
+        return self.r
 
     @classmethod
     def fixed_rating(cls, r: float) -> 'Glicko2':
@@ -79,54 +50,22 @@ class Glicko2:
         return Glicko2(r, dev=0.0, vol=0.0)
 
     @property
-    def is_fixed(self) -> bool:
+    def fixed(self) -> bool:
         """Whether this is a fixed rating, i.e. non-varying, since it has zeros rating devation and volatility."""
-        return self._phi == 0.0 and self._sigma == 0.0
+        return self.dev == 0.0 and self.vol == 0.0
 
-    def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self.r:.6g}, dev={self.dev:.6g}, vol={self.vol:.6g})"
-
-    def __float__(self) -> float:
-        return self.r
-
-    @property
-    def r(self) -> float:
-        """The rating value."""
-        return self._mu / _Q + _INIT_RATING
-
-    @r.setter
-    def r(self, r: float):
-        self._mu = _Q * (r - _INIT_RATING)
-
-    @property
-    def dev(self) -> float:
-        """The rating deviation."""
-        return self._phi / _Q
-
-    @dev.setter
-    def dev(self, dev: float):
-        if dev < 0:
-            raise ValueError("rating deviation cannot be negative")
-        self._phi = _Q * dev
-
-    @property
-    def vol(self) -> float:
-        """The rating volatility."""
-        return self._sigma / _Q
-
-    @vol.setter
-    def vol(self, vol: float):
-        if vol < 0:
-            raise ValueError("volatility cannot be negative")
-        self._sigma = _Q * vol
+    def fix(self):
+        """Fixes this rating, i.e. setting `dev = 0` and `vol = 0`."""
+        self.dev = 0.0
+        self.vol = 0.0
 
     def g(self) -> float:
-        return 1.0 / sqrt(1.0 + 3.0 / pi**2 * self._phi**2)
+        return 1.0 / sqrt(1.0 + 3.0 / pi**2 * (_Q * self.dev)**2)
 
-    def expect(self, opponent: 'Glicko2') -> float:
+    def expect(self, opponent: 'Glicko2', g: float = 1) -> float:
         """Calculate the expectation value of the outcome of a game agains the given opponent, where 0 stands for a
         loss, 1/2 is a draw, and 1 is a win. This is the winning probability in the absense of draws."""
-        return 1.0 / (1.0 + exp(-opponent.g() * (self._mu - opponent._mu)))
+        return 1.0 / (1.0 + exp(-g * _Q * (self.r - opponent.r)))
 
     @classmethod
     def win_rate_2_rating_delta(cls, exepect_s: float) -> float:
@@ -171,39 +110,38 @@ class Glicko2:
 
         if len(opps) > 0:
             gj = np.array([o.g() for o in opps])
-            ej = np.array([self.expect(o) for o in opps])
+            ej = np.array([self.expect(oj, gj) for oj, gj in zip(opps, gj)])
 
             v = 1.0 / np.sum(gj**2 * ej * (1.0 - ej))
-            s = np.sum(gj * (sj - ej))
+            s = float(np.sum(gj * (sj - ej)))
 
-            if self._sigma == 0.0:
-                sigma = 0.0
+            if self.vol == 0.0:
+                vol = 0.0
             else:
-                delta = v * s
-                sigma = self._new_sigma(delta**2, v)
+                vol = self._new_vol(s, v)
 
-            phi_star_2 = self._phi**2 + sigma**2
-
-            phi2 = 0.0 if phi_star_2 == 0.0 else 1.0 / (1.0 / phi_star_2 + 1 / v)
-            mu = self._mu + float(phi2 * s)
-            phi = sqrt(phi2)
+            dev_star = self.dev**2 + vol**2
+            dev2 = 0.0 if dev_star == 0.0 else 1.0 / (1.0 / dev_star + _Q**2 / v)
+            r = self.r + dev2 * s * _Q
+            dev = sqrt(dev2)
         else:
-            mu = self._mu
-            phi = sqrt(self._phi**2 + self._sigma**2)
-            sigma = self._sigma
+            r = self.r
+            dev = sqrt(self.dev**2 + self.vol**2)
+            vol = self.vol
 
         if inplace:
-            self._mu = mu
-            self._phi = phi
-            self._sigma = sigma
+            self.r = r
+            self.dev = dev
+            self.vol = vol
             return self
         else:
-            return Glicko2._by_unscaled_params(mu, phi, sigma)
+            return Glicko2(r, dev, vol)
 
-    def _new_sigma(self, delta2: float, v: float, eps: float = 1e-12):
-        h = self._phi**2 + v
-        lns2 = log(self._sigma**2)
-        tau2 = self.TAU**2
+    def _new_vol(self, s: float, v: float, eps: float = 1e-12) -> float:
+        delta2 = (v * s)**2
+        h = (_Q * self.dev)**2 + v
+        lns2 = 2 * log(_Q * self.vol)
+        tau2 = TAU**2
 
         def f(x):
             ex = exp(x)
@@ -215,9 +153,9 @@ class Glicko2:
             b = log(delta2 - h)
         else:
             k = 1
-            while f(a - k * sqrt(self.TAU**2)) < 0:
+            while f(a - k * TAU) < 0:
                 k = k + 1
-            b = a - k * sqrt(self.TAU**2)
+            b = a - k * TAU
 
         fa = f(a)
         fb = f(b)
@@ -232,4 +170,26 @@ class Glicko2:
             b = c
             fb = fc
 
-        return exp(a / 2)
+        return exp(a / 2) / _Q
+
+
+def performance_rating(
+        opponents: Sequence[Glicko2],
+        results: Sequence[float | int] | ArrayLike,
+        clip_range: tuple[float, float] = (0.0, 4000.0),
+        tol: float = 1e-15,
+) -> float:
+    def change_of(r: float):
+        return Glicko2(r, dev=np.inf, vol=0.0).updated(opponents, results).r - r
+
+    change_lims = change_of(clip_range[0]), change_of(clip_range[1])
+    if np.prod(change_lims) >= 0:
+        if change_of(clip_range[0]) < clip_range[0]:
+            return clip_range[0]
+        else:
+            return clip_range[1]
+
+    res = root_scalar(change_of, bracket=clip_range, xtol=tol)
+    if not res.converged:
+        raise RuntimeError(res.flag)
+    return float(np.clip(res.root, *clip_range))

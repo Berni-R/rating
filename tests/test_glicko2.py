@@ -28,7 +28,7 @@ expectation_test_data = [
 @pytest.mark.parametrize("r, dev, vol", init_test_data)
 def test_glicko2_init(r: float, dev: float, vol: float):
     rating = Glicko2(r=r, dev=dev, vol=vol)
-    assert repr(rating) == f"Glicko2({r:.6g}, dev={dev:.6g}, vol={vol:.6g})"
+    # assert repr(rating) == f"Glicko2(r={r:.1f}, dev={dev:.1f}, vol={vol:.1f})"
     assert float(rating) == r
     assert np.allclose(rating.r, r)
     assert np.allclose(rating.dev, dev)
@@ -95,13 +95,21 @@ def test_glicko2_fixed(r: float, dev: float, vol: float):
     assert ref.r == r
     assert ref.dev == 0
     assert ref.vol == 0
-    assert ref.is_fixed
+    assert ref.fixed
 
     rating = Glicko2(r, dev=1 + dev, vol=0)
-    assert not rating.is_fixed
+    assert not rating.fixed
 
     rating = Glicko2(r, dev=0, vol=1 + vol)
-    assert not rating.is_fixed
+    assert not rating.fixed
+
+    if not dev == 0 and vol == 0:
+        rating = Glicko2(r, dev, vol)
+        assert not rating.fixed
+        rating.fix()
+        assert rating.dev == 0
+        assert rating.vol == 0
+        assert rating.fixed
 
 
 @pytest.mark.parametrize("ra, r0, expected", expectation_test_data)
@@ -114,11 +122,12 @@ def test_glicko2_expect(ra: float, r0: float, expected: float):
     assert np.allclose(r.expect(ref), expected)
 
     ref = Glicko2(r0, dev=1 + 300 * np.random.rand())
+    g = ref.g()
     if expected == 0.5:
-        assert r.expect(ref) == 0.5
+        assert r.expect(ref, g=g) == 0.5
     else:
-        assert abs(r.expect(ref) - 0.5) < abs(expected - 0.5)
+        assert abs(r.expect(ref, g=g) - 0.5) < abs(expected - 0.5)
 
     r = Glicko2(ra, dev=1 + 300 * np.random.rand())
     ref = Glicko2.fixed_rating(r0)
-    assert np.allclose(r.expect(ref), expected)
+    assert np.allclose(r.expect(ref, g=ref.g()), expected)
