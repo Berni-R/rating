@@ -10,14 +10,14 @@ from rating.glicko2 import Glicko2, performance_rating
 from rating.glicko2 import _Q, _INIT_RATING_DEV
 
 
-def random_glicko(dev: float | None = None, vol: float | None = None):
+def random_glicko(dev: float | None = None, vola: float | None = None):
     r = np.random.normal(1500, 500)
     r = np.clip(r, -100, 2100)
     if dev is None:
         dev = 1 + 100 * np.random.rand()
-    if vol is None:
-        vol = 0.1 + 10 * np.random.rand()
-    return Glicko2(r=float(r), dev=dev, vol=vol)
+    if vola is None:
+        vola = 0.1 + 10 * np.random.rand()
+    return Glicko2(r=float(r), dev=dev, vola=vola)
 
 
 def test_update_input():
@@ -49,30 +49,30 @@ def test_update_input():
 def test_update_empty():
     """If no games were played, nothing should change, or the deviation should increase with the volatility."""
     for _ in range(10):
-        # differentiate between `vol > 0` and `vol = 0`
+        # differentiate between `vola > 0` and `vola = 0`
         r = random_glicko()
         r_new = r.updated([], [])
         assert r_new.r == r.r
-        assert r_new.vol == r.vol
+        assert r_new.vola == r.vola
         assert r_new.dev > r.dev
-        assert np.allclose(r_new.dev**2, r.dev**2 + r.vol**2)
+        assert np.allclose(r_new.dev ** 2, r.dev ** 2 + r.vola ** 2)
 
-        r = random_glicko(vol=0)
+        r = random_glicko(vola=0)
         r_new = r.updated([], [])
         assert r_new.r == r.r
-        assert r_new.vol == r.vol
+        assert r_new.vola == r.vola
         assert r_new.dev == r.dev
 
 
 def test_update_fixed():
-    """Fixed Glicko2 ratings should never change during the update (and remain `dev == 0` and `vol == 0`)."""
+    """Fixed Glicko2 ratings should never change during the update (and remain `dev == 0` and `vola == 0`)."""
     for _ in range(10):
         fixed = Glicko2.fixed_rating(r=np.random.normal(1500, 500))
         r = random_glicko()
         n = np.random.randint(1, 10)
         fixed_new = fixed.updated([r] * n, np.random.randint(3, size=n) / 2)
         assert fixed_new.r == fixed.r
-        assert fixed_new.vol == 0
+        assert fixed_new.vola == 0
         assert fixed_new.dev == 0
 
 
@@ -100,9 +100,9 @@ def test_update_basics():
     # rating update should be symmetric, if the deviations and volatilities are the same
     for _ in range(10):
         # create two different, random ratings
-        dev, vol = 100 * np.random.rand(), 10 * np.random.rand()
-        r1 = random_glicko(dev=dev, vol=vol)
-        r2 = random_glicko(dev=dev, vol=vol)
+        dev, vola = 100 * np.random.rand(), 10 * np.random.rand()
+        r1 = random_glicko(dev=dev, vola=vola)
+        r2 = random_glicko(dev=dev, vola=vola)
         if abs(float(r1) - float(r2)) < 10:
             continue
 
@@ -119,25 +119,25 @@ def test_update_inplace():
         r1 = random_glicko()
         r2 = random_glicko()
         r3 = random_glicko()
-        r1_init = Glicko2(r1.r, r1.dev, r1.vol)
+        r1_init = Glicko2(r1.r, r1.dev, r1.vola)
         r1.updated([r2, r3], np.random.randint(3, size=2) / 2, inplace=True)
         assert r1 != r1_init
         assert r1.r != r1_init.r
         assert r1.dev != r1_init.dev
-        assert r1.vol != r1_init.vol
+        assert r1.vola != r1_init.vola
 
 
 def test_update_glickman_example():
     """Calculate the example in http://www.glicko.net/glicko/glicko2.pdf"""
     Glicko2.TAU = 0.5
-    p = Glicko2(1500, 200, vol=0.06 / _Q)
+    p = Glicko2(1500, 200, vola=0.06 / _Q)
     opponents = [Glicko2(1400, 30), Glicko2(1450, 100), Glicko2(1700, 300)]
     scores = [1, 0, 0]
     p.updated(opponents, scores, inplace=True)
 
     assert np.allclose(p.r, 1446.88, atol=0.01)  # original is wrong: 1464.06 - he used 10**x instead of exp(x)
     assert np.allclose(p.dev, 151.52, atol=0.01)
-    assert np.allclose(p.vol, 10.422, atol=0.001)  # 10.422 ~= 0.05999 / (_Q = ln(10) / 400) < 10.423 ~= 0.06 / _Q
+    assert np.allclose(p.vola, 10.422, atol=0.001)  # 10.422 ~= 0.05999 / (_Q = ln(10) / 400) < 10.423 ~= 0.06 / _Q
 
 
 def classical_update(rating: Glicko2, opponents: Sequence[Glicko2], sj: ArrayLike, c2_t: float = 0.0):
@@ -170,8 +170,8 @@ def test_update_classical_correspondence():
     played. Exactly that happens with zero volatility, too."""
     for _ in range(10):
         m = np.random.randint(1, 11)
-        rating = random_glicko(vol=0)
-        opps = [random_glicko(vol=0) for _ in range(m)]
+        rating = random_glicko(vola=0)
+        opps = [random_glicko(vola=0) for _ in range(m)]
         sj = np.random.choice([0, 1 / 2, 1], size=m)
         r, rd = classical_update(rating, opps, sj)
         r2 = rating.updated(opps, sj)
@@ -216,7 +216,7 @@ def test_update_statistically(win_rate: float, draw: float, sigma: float = 3.0):
 
     # much longer empirical testing with much lower volatility to decrease the rating deviation
     # this leads to stronger confidence intervals
-    r.vol = 0.1
+    r.vola = 0.1
     r, ref = emperically_adjust(win_rate, n=1000, m=10, r0=r)
     assert r.dev < 10
     w_low, w_high = Glicko2(r.r - sigma * r.dev).expect(ref), Glicko2(r.r + sigma * r.dev).expect(ref)
@@ -243,7 +243,7 @@ def test_performance(
     perf = performance_rating(opponents, results, clip_range, tol=tol)
 
     def updated(r: float, dev_: float = inf) -> float:
-        return Glicko2(r, dev=dev_, vol=0).updated(opponents, results).r
+        return Glicko2(r, dev=dev_, vola=0).updated(opponents, results).r
 
     def close_to_unchanged(r0: float, dev_: float = inf) -> bool:
         r1 = updated(r0, dev_)

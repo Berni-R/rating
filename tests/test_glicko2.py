@@ -25,90 +25,90 @@ expectation_test_data = [
 ]
 
 
-@pytest.mark.parametrize("r, dev, vol", init_test_data)
-def test_glicko2_init(r: float, dev: float, vol: float):
-    rating = Glicko2(r=r, dev=dev, vol=vol)
-    # assert repr(rating) == f"Glicko2(r={r:.1f}, dev={dev:.1f}, vol={vol:.1f})"
+@pytest.mark.parametrize("r, dev, vola", init_test_data)
+def test_glicko2_init(r: float, dev: float, vola: float):
+    rating = Glicko2(r=r, dev=dev, vola=vola)
+    # assert repr(rating) == f"Glicko2(r={r:.1f}, dev={dev:.1f}, vola={vola:.1f})"
     assert float(rating) == r
     assert np.allclose(rating.r, r)
     assert np.allclose(rating.dev, dev)
-    assert np.allclose(rating.vol, vol)
+    assert np.allclose(rating.vola, vola)
 
 
-@pytest.mark.parametrize("r, dev, vol", init_test_data)
-def test_glicko2_set_get(r: float, dev: float, vol: float):
+@pytest.mark.parametrize("r, dev, vola", init_test_data)
+def test_glicko2_set_get(r: float, dev: float, vola: float):
     rating = Glicko2()
     rating.r = r
     rating.dev = dev
-    rating.vol = vol
+    rating.vola = vola
     assert np.allclose(rating.r, r)
     assert np.allclose(rating.dev, dev)
-    assert np.allclose(rating.vol, vol)
+    assert np.allclose(rating.vola, vola)
 
 
-@pytest.mark.parametrize("r, dev, vol", init_test_data)
-def test_glicko2_setter_raises(r: float, dev: float, vol: float):
-    if dev == 0 or vol == 0:
+@pytest.mark.parametrize("r, dev, vola", init_test_data)
+def test_glicko2_setter_raises(r: float, dev: float, vola: float):
+    if dev == 0 or vola == 0:
         return
     rating = Glicko2(r)
     with pytest.raises(ValueError):
         rating.dev = -dev
     with pytest.raises(ValueError):
-        rating.vol = -vol
+        rating.vola = -vola
 
 
-@pytest.mark.parametrize("r, dev, vol", init_test_data)
-def test_glicko2_equal(r: float, dev: float, vol: float):
-    r1 = Glicko2(r=r, dev=dev, vol=vol)
-    assert r1 == Glicko2(r=r, dev=dev, vol=vol)
-    assert not (r1 != Glicko2(r=r, dev=dev, vol=vol))
+@pytest.mark.parametrize("r, dev, vola", init_test_data)
+def test_glicko2_equal(r: float, dev: float, vola: float):
+    r1 = Glicko2(r=r, dev=dev, vola=vola)
+    assert r1 == Glicko2(r=r, dev=dev, vola=vola)
+    assert not (r1 != Glicko2(r=r, dev=dev, vola=vola))
 
-    assert not r1 == Glicko2(r=r - 42, dev=dev, vol=vol)
-    assert r1 != Glicko2(r=r - 42, dev=dev, vol=vol)
-    assert r1 != Glicko2(r=r, dev=dev + 1, vol=vol)
-    assert r1 != Glicko2(r=r, dev=dev, vol=vol + 0.1)
+    assert not r1 == Glicko2(r=r - 42, dev=dev, vola=vola)
+    assert r1 != Glicko2(r=r - 42, dev=dev, vola=vola)
+    assert r1 != Glicko2(r=r, dev=dev + 1, vola=vola)
+    assert r1 != Glicko2(r=r, dev=dev, vola=vola + 0.1)
 
 
 @pytest.mark.parametrize("low, high", [(1300, 1500), (1234.5, 1234.6), (1800, 2000)])
 def test_glicko2_lt_gt(low: float, high: float):
     assert low < high  # this is what we build on!
 
-    # different dev and vol
-    r_low = Glicko2(r=low, dev=100*np.random.rand(), vol=10*np.random.rand())
-    r_high = Glicko2(r=high, dev=100*np.random.rand(), vol=10*np.random.rand())
+    # different dev and vola
+    r_low = Glicko2(r=low, dev=100*np.random.rand(), vola=10 * np.random.rand())
+    r_high = Glicko2(r=high, dev=100*np.random.rand(), vola=10 * np.random.rand())
     assert r_low < r_high
     assert r_high > r_low
 
-    # same dev and vol
-    for dev, vol in [(0, 0), (50, 0), (0, 10), (30, 5),
-                     (100*np.random.rand(), 0), (0, 10*np.random.rand()),
-                     (100*np.random.rand(), 10*np.random.rand())]:
-        r_low = Glicko2(r=low, dev=dev, vol=vol)
-        r_high = Glicko2(r=high, dev=dev, vol=vol)
+    # same dev and vola
+    for dev, vola in [(0, 0), (50, 0), (0, 10), (30, 5),
+                      (100*np.random.rand(), 0), (0, 10*np.random.rand()),
+                      (100*np.random.rand(), 10*np.random.rand())]:
+        r_low = Glicko2(r=low, dev=dev, vola=vola)
+        r_high = Glicko2(r=high, dev=dev, vola=vola)
         assert r_low < r_high
         assert r_high > r_low
 
 
-@pytest.mark.parametrize("r, dev, vol", init_test_data)
-def test_glicko2_fixed(r: float, dev: float, vol: float):
+@pytest.mark.parametrize("r, dev, vola", init_test_data)
+def test_glicko2_fixed(r: float, dev: float, vola: float):
     ref = Glicko2.fixed_rating(r)
     assert ref.r == r
     assert ref.dev == 0
-    assert ref.vol == 0
+    assert ref.vola == 0
     assert ref.fixed
 
-    rating = Glicko2(r, dev=1 + dev, vol=0)
+    rating = Glicko2(r, dev=1 + dev, vola=0)
     assert not rating.fixed
 
-    rating = Glicko2(r, dev=0, vol=1 + vol)
+    rating = Glicko2(r, dev=0, vola=1 + vola)
     assert not rating.fixed
 
-    if not dev == 0 and vol == 0:
-        rating = Glicko2(r, dev, vol)
+    if not dev == 0 and vola == 0:
+        rating = Glicko2(r, dev, vola)
         assert not rating.fixed
         rating.fix()
         assert rating.dev == 0
-        assert rating.vol == 0
+        assert rating.vola == 0
         assert rating.fixed
 
 

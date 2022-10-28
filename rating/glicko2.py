@@ -20,11 +20,11 @@ class Glicko2:
 
     If you set the volatility to zero, it degenerates to the classical Glicko rating system (with no increase if the
     rating deviation over time, i.e. a constant c = 0). If no matches are played, Glicko-2 rating devations do increase
-    due to a non-zero volatility. In this special case, one can make the assosication c**2 * t = vol**2 as long as the
+    due to a non-zero volatility. In this special case, one can make the assosication c**2 * t = vola**2 as long as the
     rating deviation is smaller than 350. With a typical volatility of 0.06 / (ln(10) / 400) ~ 10.423 and t = 1, we
-    derive c = vol ~ 10.423. Or vice versa, with the example from Wikipedia
+    derive c = vola ~ 10.423. Or vice versa, with the example from Wikipedia
     (https://de.wikipedia.org/wiki/Glicko-System) of c ~ 34.64, where the deviation reaches 350 after 100 periods, we
-    would have vol ~ 34.64 ~ 0.1994 / (ln(10) / 400).
+    would have vola ~ 34.64 ~ 0.1994 / (ln(10) / 400).
 
     Note that Glicko-2 ratings has the ability to adopt much quicker to rating changes, than the classical Glicko
     system. This ability increases with higher volatility. At them same time, it might over-react to result that is a
@@ -34,12 +34,12 @@ class Glicko2:
     can be used as fixed rating reference.
 
     In terms of comparisons, note that two ratings are always ordered on only the rating value, but euqality requires
-    all attributes (r, dev, vol) to be the same. This implies that two ratings r1 and r2 might fulfil neither of the
+    all attributes (r, dev, vola) to be the same. This implies that two ratings r1 and r2 might fulfil neither of the
     following equations: r1 < r2, r1 > r2, r1 == r2.
     """
     r: float = field(default=_INIT_RATING, order=True, eq=True, converter=float)
     dev: float = field(default=_INIT_RATING_DEV, order=False, eq=True, converter=float, validator=validators.ge(0))
-    vol: float = field(default=_DEF_VOLATILITY, order=False, eq=True, converter=float, validator=validators.ge(0))
+    vola: float = field(default=_DEF_VOLATILITY, order=False, eq=True, converter=float, validator=validators.ge(0))
 
     def __float__(self) -> float:
         return self.r
@@ -47,17 +47,17 @@ class Glicko2:
     @classmethod
     def fixed_rating(cls, r: float) -> 'Glicko2':
         """Create a fixed rating, i.e. one that has zeros rating devation and volatility. Hence, it does not vary."""
-        return Glicko2(r, dev=0.0, vol=0.0)
+        return Glicko2(r, dev=0.0, vola=0.0)
 
     @property
     def fixed(self) -> bool:
         """Whether this is a fixed rating, i.e. non-varying, since it has zeros rating devation and volatility."""
-        return self.dev == 0.0 and self.vol == 0.0
+        return self.dev == 0.0 and self.vola == 0.0
 
     def fix(self):
-        """Fixes this rating, i.e. setting `dev = 0` and `vol = 0`."""
+        """Fixes this rating, i.e. setting `dev = 0` and `vola = 0`."""
         self.dev = 0.0
-        self.vol = 0.0
+        self.vola = 0.0
 
     def g(self) -> float:
         return 1.0 / sqrt(1.0 + 3.0 / pi**2 * (_Q * self.dev)**2)
@@ -115,7 +115,7 @@ class Glicko2:
             v = 1.0 / np.sum(gj**2 * ej * (1.0 - ej))
             s = float(np.sum(gj * (sj - ej)))
 
-            if self.vol == 0.0:
+            if self.vola == 0.0:
                 vol = 0.0
             else:
                 vol = self._new_vol(s, v)
@@ -126,13 +126,13 @@ class Glicko2:
             dev = sqrt(dev2)
         else:
             r = self.r
-            dev = sqrt(self.dev**2 + self.vol**2)
-            vol = self.vol
+            dev = sqrt(self.dev ** 2 + self.vola ** 2)
+            vol = self.vola
 
         if inplace:
             self.r = r
             self.dev = dev
-            self.vol = vol
+            self.vola = vol
             return self
         else:
             return Glicko2(r, dev, vol)
@@ -140,7 +140,7 @@ class Glicko2:
     def _new_vol(self, s: float, v: float, eps: float = 1e-12) -> float:
         delta2 = (v * s)**2
         h = (_Q * self.dev)**2 + v
-        lns2 = 2 * log(_Q * self.vol)
+        lns2 = 2 * log(_Q * self.vola)
         tau2 = TAU**2
 
         def f(x):
@@ -180,7 +180,7 @@ def performance_rating(
         tol: float = 1e-15,
 ) -> float:
     def change_of(r: float):
-        return Glicko2(r, dev=np.inf, vol=0.0).updated(opponents, results).r - r
+        return Glicko2(r, dev=np.inf, vola=0.0).updated(opponents, results).r - r
 
     change_lims = change_of(clip_range[0]), change_of(clip_range[1])
     if np.prod(change_lims) >= 0:
