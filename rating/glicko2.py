@@ -6,6 +6,7 @@ from numpy.typing import ArrayLike
 from scipy.optimize import root_scalar
 
 # constant tau which constrains the volatility over time
+# TODO: get a better grasp of this parameter TAU
 TAU: float = 0.5
 _Q: float = log(10.0) / 400.0
 
@@ -60,6 +61,7 @@ class Glicko2:
         self.vola = 0.0
 
     def g(self) -> float:
+        # TODO: this ominous factor seems to be closer to 1/e than 3/pi^2 - change?!
         return 1.0 / sqrt(1.0 + 3.0 / pi**2 * (_Q * self.dev)**2)
 
     def expect(self, opponent: 'Glicko2', g: float = 1) -> float:
