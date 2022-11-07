@@ -9,3 +9,7 @@ __pycache__
 .mypy_cache
 .coverage*
 .idea
+
+ipython-input-*-profile
+profile.json
+

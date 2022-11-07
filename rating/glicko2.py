@@ -4,6 +4,7 @@ from math import sqrt, exp, log, pi
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.optimize import root_scalar
+from scipy.special import expit
 
 # constant tau which constrains the volatility over time
 # TODO: get a better grasp of this parameter TAU
@@ -12,7 +13,7 @@ _Q: float = log(10.0) / 400.0
 
 _INIT_RATING = 1500.0
 _INIT_RATING_DEV = 350.0
-_DEF_VOLATILITY = 0.06 / _Q  # ~10.423
+_DEF_VOLATILITY = 10.0  # ~= 0.06 / _Q ~= 10.423
 
 
 @define(order=True, eq=True, hash=True)
@@ -64,9 +65,15 @@ class Glicko2:
         # TODO: this ominous factor seems to be closer to 1/e than 3/pi^2 - change?!
         return 1.0 / sqrt(1.0 + 3.0 / pi**2 * (_Q * self.dev)**2)
 
-    def expect(self, opponent: 'Glicko2', g: float = 1) -> float:
+    def expect(self, opponent: 'Glicko2', g: float = 1.0) -> float:
         """Calculate the expectation value of the outcome of a game agains the given opponent, where 0 stands for a
-        loss, 1/2 is a draw, and 1 is a win. This is the winning probability in the absense of draws."""
+        loss, 1/2 is a draw, and 1 is a win. This is the winning probability in the absense of draws.
+
+        :param opponent:    The oponnent to play.
+        :param g:           The g-factor of the Glicko-2 rating system.
+                            It should not be used (i.e. set to one), in normal usage.
+        :return: The expected outcome, which is in the interval (0, 1).
+        """
         return 1.0 / (1.0 + exp(-g * _Q * (self.r - opponent.r)))
 
     @classmethod
@@ -105,39 +112,38 @@ class Glicko2:
             raise ValueError("opponents must be some sequence")
         if not all(isinstance(opponent, Glicko2) for opponent in opponents):
             raise ValueError("opponents must be some sequence of type Glicko2")
-        opps = np.array(opponents)
-        sj = np.array(results).astype(float)
-        if sj.ndim != 1 or len(opps) != len(sj):
+        sj = np.array(results, copy=False, dtype=float)
+        if sj.ndim != 1 or len(opponents) != len(sj):
             raise ValueError()
 
-        if len(opps) > 0:
-            gj = np.array([o.g() for o in opps])
-            ej = np.array([self.expect(oj, gj) for oj, gj in zip(opps, gj)])
+        if len(opponents) > 0:
+            gj = np.fromiter((o.g() for o in opponents), dtype=float)
+            ej = np.fromiter((self.expect(oj, gj) for oj, gj in zip(opponents, gj)), dtype=float)
 
             v = 1.0 / np.sum(gj**2 * ej * (1.0 - ej))
             s = float(np.sum(gj * (sj - ej)))
 
             if self.vola == 0.0:
-                vol = 0.0
+                vola = 0.0
             else:
-                vol = self._new_vol(s, v)
+                vola = self._new_vol(s, v)
 
-            dev_star = self.dev**2 + vol**2
+            dev_star = self.dev**2 + vola**2
             dev2 = 0.0 if dev_star == 0.0 else 1.0 / (1.0 / dev_star + _Q**2 / v)
             r = self.r + dev2 * s * _Q
             dev = sqrt(dev2)
         else:
             r = self.r
             dev = sqrt(self.dev ** 2 + self.vola ** 2)
-            vol = self.vola
+            vola = self.vola
 
         if inplace:
             self.r = r
             self.dev = dev
-            self.vola = vol
+            self.vola = vola
             return self
         else:
-            return Glicko2(r, dev, vol)
+            return Glicko2(r, dev, vola)
 
     def _new_vol(self, s: float, v: float, eps: float = 1e-12) -> float:
         delta2 = (v * s)**2
@@ -164,7 +170,7 @@ class Glicko2:
         while abs(b - a) > eps:
             c = a + (a - b) * fa / (fb - fa)
             fc = f(c)
-            if fc * fb < 0:
+            if fc * fb <= 0:
                 a = b
                 fa = fb
             else:
@@ -181,17 +187,35 @@ def performance_rating(
         clip_range: tuple[float, float] = (0.0, 4000.0),
         tol: float = 1e-15,
 ) -> float:
-    def change_of(r: float):
+    """Calculate the rating that would not change in an update givent the opponents and results
+    (a number only, deviation and volatility can be anything; the deviation would generally change).
+
+    :param opponents:   The opponents played. (As one would pass to `Glicko2.update()`.)
+    :param results:     The results for the respective opponents. (As one would pass to `Glicko2.update()`.)
+    :param clip_range:  Some extreme results, would result in extreme ratings; esp. when all games are won or lost, the
+                        performance rating would technically be plus or minus infinity.
+                        To avoid this (and resulting numerical difficulties), limit the range of outcomes to this.
+    :param tol:         The tolerance in the determined performance rating.
+    :return: The performance rating as a single floating point number.
+    """
+    def change_of(r: float) -> float:
         return Glicko2(r, dev=np.inf, vola=0.0).updated(opponents, results).r - r
 
     change_lims = change_of(clip_range[0]), change_of(clip_range[1])
     if np.prod(change_lims) >= 0:
-        if change_of(clip_range[0]) < clip_range[0]:
-            return clip_range[0]
-        else:
-            return clip_range[1]
+        return clip_range[0] if change_lims[0] < clip_range[0] else clip_range[1]
 
-    res = root_scalar(change_of, bracket=clip_range, xtol=tol)
+    # the next 8 lines are some code duplication, but it speeds up by about 3x opposed to using `Glicko2.update()`
+    sj = np.array(results, copy=False, dtype=float)
+    if sj.ndim != 1 or len(opponents) != len(sj):
+        raise ValueError()
+    oj = np.fromiter((o.r for o in opponents), dtype=float)
+    gj = np.fromiter((o.g() for o in opponents), dtype=float)
+
+    def delta_s(r: float):
+        return np.sum(gj * (sj - expit(gj * _Q * (r - oj))))
+
+    res = root_scalar(delta_s, bracket=clip_range, xtol=tol)
     if not res.converged:
         raise RuntimeError(res.flag)
     return float(np.clip(res.root, *clip_range))

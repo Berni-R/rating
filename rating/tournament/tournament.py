@@ -1,4 +1,4 @@
-from typing import TypeVar, TypeAlias, Callable, Sequence
+from typing import TypeVar, TypeAlias, Callable, Sequence, Literal
 from collections import OrderedDict
 from copy import copy
 import warnings
@@ -82,6 +82,7 @@ class Tournament:
 
         self._ratings = self._initial_ratings
         self._round_history: list[RoundHistory] = []
+        self._game_cnt = np.zeros(len(players), dtype=int)
 
         if len(self._players) != len(self._ratings):
             raise ValueError(f"Must have exactly one rating ({len([self._ratings])}) per each player ({len(players)})!")
@@ -129,12 +130,7 @@ class Tournament:
 
     def games_per_player(self) -> NDArray[np.int_]:
         """The number of games played for each player."""
-        cnt = np.zeros(len(self._players), dtype=int)
-        for h in self._round_history:
-            for (i, k), s in h:
-                cnt[i] += 1
-                cnt[k] += 1
-        return cnt
+        return self._game_cnt.copy()
 
     def pair_counts(self, symmetric: bool = True) -> NDArray[np.int_]:
         """The counts of the player pairings done in this tournament.
@@ -202,12 +198,20 @@ class Tournament:
 
     def performance_ratings(
             self,
+            reference_rating: Literal['initial', 'final'] | Sequence[Glicko2] = 'final',
             clip_range: tuple[float, float] = (0.0, 4000.0),
             tol: float = 1e-15,
     ) -> NDArray[np.float_]:
         """The performance ratings of the players during the tournament. (See `glicko2.performance_rating`)"""
+        if reference_rating == 'initial':
+            reference_rating = self._initial_ratings
+        elif reference_rating == 'final':
+            reference_rating = self._ratings
+        if len(reference_rating) != len(self._players):
+            raise ValueError(f"`reference_rating` needs to match the number of players ({len(self._players)})")
+
         flat_hist = [iks for h in self._round_history for iks in h]
-        opponents, results = gather_opponents_scores(self._initial_ratings, flat_hist)
+        opponents, results = gather_opponents_scores(reference_rating, flat_hist)
         # -> tuple[list[list[Glicko2]], list[list[float]]]:
         return np.array([
             performance_rating(opp, s, clip_range=clip_range, tol=tol)
@@ -250,16 +254,18 @@ class Tournament:
         for i, k in pairings:
             score = self._game(self._players[i], self._players[k])
             history.append(((i, k), score))
+            # explicitly holding these makes the `RatingBasedPairer` much quicker, because it calls `games_per_player`
+            self._game_cnt[i] += 1
+            self._game_cnt[k] += 1
 
         self._round_history.append(history)
         self._ratings = update_ratings(self._ratings, history)
-
-        gc.collect()
 
     def hold(self, rounds: int, pbar: bool = True, **tqdm_kwargs) -> 'Tournament':
         """Hold the tournament, i.e. play a given number of rounds."""
         for _ in trange(rounds, disable=not pbar, **tqdm_kwargs):
             pairings = self._pairer(self)
             self.play_round(pairings=pairings)
+        gc.collect()
 
         return self

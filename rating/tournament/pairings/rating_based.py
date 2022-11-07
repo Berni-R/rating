@@ -88,6 +88,8 @@ class RatingBasedPairer:
             p[i] = 0.0
             p /= np.sum(p)
             k = np.random.choice(np.arange(n_players), p=p)
+            i = int(i)
+            k = int(k)
 
             n_games[i] += 1
             # do NOT `n_games[k] += 1`, since we want the distributions from above to hold, which are independent
